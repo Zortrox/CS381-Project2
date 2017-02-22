@@ -8,6 +8,7 @@ import java.net.*;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ChatProgram extends Thread{
 
@@ -22,6 +23,7 @@ public class ChatProgram extends Thread{
 	private boolean mIsFirst;
 
 	private Semaphore mutex = new Semaphore(1);
+	private AtomicBoolean bExit = new AtomicBoolean(false);
 	private ArrayList<Socket> arrClients = new ArrayList<>();
 
 	public static void main(String[] args) {
@@ -104,7 +106,7 @@ public class ChatProgram extends Thread{
 						String msgSend = "";
 						String msgReceive = "";
 
-						while (true) {
+						while (!msgReceive.toLowerCase().equals("exit") && !bExit.get()) {
 							receiveTCPData(listenSocket, msg);
 							msgReceive = new String(msg.mData);
 							System.out.println("<client>: " + msgReceive);
@@ -116,6 +118,8 @@ public class ChatProgram extends Thread{
 							}
 							mutex.release();
 						}
+
+						bExit.set(true);
 					} catch (Exception e) {
 						e.printStackTrace();
 					}
@@ -132,8 +136,7 @@ public class ChatProgram extends Thread{
 		String msgReceive = "";
 
 		//keep getting user input
-		//send data, receive server data
-		while (!msgSend.toLowerCase().equals("exit"))	{
+		while (!msgSend.toLowerCase().equals("exit") && !bExit.get()) {
 			System.out.print("Text to Send: ");
 			msgSend = reader.readLine();
 			msg.mData = msgSend.getBytes();
@@ -152,6 +155,8 @@ public class ChatProgram extends Thread{
 		}
 
 		//close socket if user "exits"
+		bExit.set(true);
+
 		socket.close();
 	}
 
@@ -175,7 +180,7 @@ public class ChatProgram extends Thread{
 						String recMsg = "";
 
 						//keep reading data until user "exits"
-						while (!recMsg.toLowerCase().equals("exit")) {
+						while (!recMsg.toLowerCase().equals("exit") && !bExit.get()) {
 							//receive the data
 							Message msg = new Message();
 							receiveTCPData(clientSocket, msg);
@@ -203,6 +208,8 @@ public class ChatProgram extends Thread{
 								sendTCPData(socket, msg);
 							}
 						}
+
+						bExit.set(true);
 					}
 					catch(Exception ex) {
 						ex.printStackTrace();
