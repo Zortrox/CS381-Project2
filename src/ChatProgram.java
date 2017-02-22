@@ -31,7 +31,7 @@ public class ChatProgram extends Thread{
 			int port = Integer.parseInt(loc.substring(loc.indexOf(':') + 1));
 			String IP = loc.substring(0, loc.indexOf(':'));
 
-			boolean isFirst = true;
+			boolean isFirst = false;
 			if (args.length > 1) isFirst = Boolean.valueOf(args[1]);
 
 			System.out.println("Starting Client in TCP\n");
@@ -162,6 +162,10 @@ public class ChatProgram extends Thread{
 			//wait for new connection
 			Socket clientSocket = serverSocket.accept();
 			System.out.println("<server>: New connection.");
+
+			mutex.acquire();
+			arrClients.add(clientSocket);
+			mutex.release();
 
 			//create new thread to listen
 			Thread thrConn = new Thread(new Runnable() {
