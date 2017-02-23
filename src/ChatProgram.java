@@ -8,7 +8,6 @@ import java.net.*;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ChatProgram extends Thread{
 
@@ -23,7 +22,6 @@ public class ChatProgram extends Thread{
 	private boolean mIsFirst;
 
 	private Semaphore mutex = new Semaphore(1);
-	private AtomicBoolean bExit = new AtomicBoolean(false);
 	private ArrayList<Socket> arrClients = new ArrayList<>();
 
 	public static void main(String[] args) {
@@ -106,20 +104,22 @@ public class ChatProgram extends Thread{
 						String msgSend = "";
 						String msgReceive = "";
 
-						while (!msgReceive.toLowerCase().equals("exit") && !bExit.get()) {
+						while (!msgReceive.toLowerCase().equals("exit")) {
 							receiveTCPData(listenSocket, msg);
 							msgReceive = new String(msg.mData);
 							System.out.println("<client>: " + msgReceive);
 
 							//send to all clients
-							mutex.acquire();
-							for (int i = 0; i < arrClients.size(); i++) {
-								sendTCPData(arrClients.get(i), msg);
+							if (!msgReceive.toLowerCase().equals("exit")) {
+								mutex.acquire();
+								for (int i = 0; i < arrClients.size(); i++) {
+									sendTCPData(arrClients.get(i), msg);
+								}
+								mutex.release();
+							} else {
+								listenSocket.close();
 							}
-							mutex.release();
 						}
-
-						bExit.set(true);
 					} catch (Exception e) {
 						e.printStackTrace();
 					}
@@ -136,7 +136,7 @@ public class ChatProgram extends Thread{
 		String msgReceive = "";
 
 		//keep getting user input
-		while (!msgSend.toLowerCase().equals("exit") && !bExit.get()) {
+		while (!msgSend.toLowerCase().equals("exit")) {
 			System.out.print("Text to Send: ");
 			msgSend = reader.readLine();
 			msg.mData = msgSend.getBytes();
@@ -155,12 +155,12 @@ public class ChatProgram extends Thread{
 		}
 
 		//close socket if user "exits"
-		bExit.set(true);
-
 		socket.close();
 	}
 
-	void processConnections(ServerSocket serverSocket, Socket socket) throws Exception{
+	void processConnections(ServerSocket serverSocket, Socket socket) throws Exception {
+		ArrayList<Thread> arrThreads = new ArrayList<>();
+
 		//process requests (read/send data)
 		while (true)
 		{
@@ -180,36 +180,39 @@ public class ChatProgram extends Thread{
 						String recMsg = "";
 
 						//keep reading data until user "exits"
-						while (!recMsg.toLowerCase().equals("exit") && !bExit.get()) {
+						while (!recMsg.toLowerCase().equals("exit")) {
 							//receive the data
-							Message msg = new Message();
-							receiveTCPData(clientSocket, msg);
+							try {
+								Message msg = new Message();
+								receiveTCPData(clientSocket, msg);
 
-							//send back capitalized text
-							recMsg = new String(msg.mData);
-							if (recMsg.toLowerCase().equals("exit")) {
-								System.out.println("[client disconnecting]");
-								msg.mData = "Goodbye".getBytes();
-							} else {
-								System.out.println("<client>: " + recMsg);
-							}
+								//send back capitalized text
+								recMsg = new String(msg.mData);
+								if (recMsg.toLowerCase().equals("exit")) {
+									System.out.println("[client disconnecting]");
+									msg.mData = "Goodbye".getBytes();
+								} else {
+									System.out.println("<client>: " + recMsg);
+								}
 
-							//send data to all other clients
-							mutex.acquire();
-							for (int i = 0; i < arrClients.size(); i++) {
-								if (!arrClients.get(i).equals(clientSocket)) {
-									sendTCPData(arrClients.get(i), msg);
+								//send data to all other clients
+								mutex.acquire();
+								for (int i = 0; i < arrClients.size(); i++) {
+									if (!arrClients.get(i).equals(clientSocket)) {
+										sendTCPData(arrClients.get(i), msg);
+									}
+								}
+								mutex.release();
+
+								//send data to server
+								if (!mIsFirst) {
+									sendTCPData(socket, msg);
 								}
 							}
-							mutex.release();
-
-							//send data to server
-							if (!mIsFirst) {
-								sendTCPData(socket, msg);
+							catch (Exception ex) {
+								ex.printStackTrace();
 							}
 						}
-
-						bExit.set(true);
 					}
 					catch(Exception ex) {
 						ex.printStackTrace();
@@ -217,6 +220,9 @@ public class ChatProgram extends Thread{
 				}
 			});
 			thrConn.start();	//start the thread
+
+			//add to array
+			arrThreads.add(thrConn);
 		}
 	}
 
