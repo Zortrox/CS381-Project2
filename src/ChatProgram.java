@@ -180,7 +180,8 @@ public class ChatProgram extends Thread{
 						String recMsg = "";
 
 						//keep reading data until user "exits"
-						while (!recMsg.toLowerCase().equals("exit")) {
+						boolean bExit = false;
+						while (!bExit) {
 							//receive the data
 							try {
 								Message msg = new Message();
@@ -190,7 +191,8 @@ public class ChatProgram extends Thread{
 								recMsg = new String(msg.mData);
 								if (recMsg.toLowerCase().equals("exit")) {
 									System.out.println("[client disconnecting]");
-									msg.mData = "Goodbye".getBytes();
+									msg.mData = "[A client disconnected]".getBytes();
+									bExit = true;
 								} else {
 									System.out.println("<client>: " + recMsg);
 								}
@@ -213,6 +215,8 @@ public class ChatProgram extends Thread{
 								ex.printStackTrace();
 							}
 						}
+
+						clientSocket.close();
 					}
 					catch(Exception ex) {
 						ex.printStackTrace();
