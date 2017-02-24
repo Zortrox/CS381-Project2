@@ -2,26 +2,41 @@
  * Created by Zortrox on 2/22/2016.
  */
 
+import javax.swing.*;
+import javax.swing.border.Border;
+import javax.swing.text.DefaultCaret;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.*;
-import java.lang.reflect.Array;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.concurrent.Semaphore;
 
-public class ChatProgram extends Thread{
+public class ChatProgram {
 
 	//TCP data wrapper
 	private class Message {
 		byte[] mData;		//actual data
 	}
 
-	private int mType;
-	private int mPort;
+	private int mClientPort;
+	private int mServerPort;
 	private String mIP;
 	private boolean mIsFirst;
 
-	private Semaphore mutex = new Semaphore(1);
+	private Socket clientSocket;
+	private ServerSocket serverSocket;
+
+	private String clientName = "";
+	private JTextArea txtReceive;
+	private JScrollPane scrollPane;
+
+	private Semaphore mtxClient = new Semaphore(1);
+	private Semaphore mtxSendServer = new Semaphore(1);
+	private Semaphore mtxTextArea = new Semaphore(1);
+
 	private ArrayList<Socket> arrClients = new ArrayList<>();
 
 	public static void main(String[] args) {
@@ -32,63 +47,167 @@ public class ChatProgram extends Thread{
 			String IP = loc.substring(0, loc.indexOf(':'));
 
 			boolean isFirst = false;
-			if (args.length > 1) isFirst = Boolean.valueOf(args[1]);
+			int serverPort = port;
+			if (args.length > 1) {
+				if (args[1].toLowerCase().equals("true")) {
+					isFirst = true;
+				} else {
+					try {
+						serverPort = Integer.parseInt(args[1]);
+					} catch (NumberFormatException e) {
+						serverPort = port;
+					}
+				}
+			}
 
 			System.out.println("Starting Client in TCP\n");
 
-			ChatProgram client = new ChatProgram(port, IP, isFirst);
+			ChatProgram client = new ChatProgram(port, serverPort, IP, isFirst);
+
+			try {
+				client.TCPConnection();
+			} catch (Exception ex) {
+				System.out.println("[Network Error Occurred]");
+			}
 		}
 	}
 
-	private ChatProgram(int port, String IP, boolean isFirst) {
-		mPort = port;
+	private ChatProgram(int portClient, int portServer, String IP, boolean isFirst) {
+		mClientPort = portClient;
+		mServerPort = portServer;
 		mIP = IP;
 		mIsFirst = isFirst;
 
-		try {
-			TCPConnection();
-		} catch (Exception ex) {
-			ex.printStackTrace();
+		JFrame frame = new JFrame("Chat Client");
+		frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+
+		txtReceive = new JTextArea(1, 20);
+		txtReceive.setEditable(false);
+		scrollPane = new JScrollPane(txtReceive, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+				JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+		DefaultCaret caret = (DefaultCaret) txtReceive.getCaret();
+		caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
+		frame.add(txtReceive);
+
+		JPanel panelSend = new JPanel();
+		JTextField txtMessage = new JTextField();
+
+		txtMessage.setColumns(40);
+		txtMessage.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				broadcast(txtMessage.getText());
+			}
+		});
+
+		JButton btnSend = new JButton("Send");
+		btnSend.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				broadcast(txtMessage.getText());
+			}
+		});
+
+		panelSend.add(txtMessage, BorderLayout.CENTER);
+		panelSend.add(btnSend, BorderLayout.EAST);
+
+		frame.add(panelSend, BorderLayout.SOUTH);
+
+		frame.pack();
+		frame.setVisible(true);
+
+		while (clientName.equals("")) {
+			clientName = JOptionPane.showInputDialog("Enter your name:");
 		}
 	}
 
-	private void TCPConnection() throws Exception {
-		Socket socket = null;
+	private void broadcast(String msgSend) {
+		boolean bExit = false;
+
+		Message msg = new Message();
+		msg.mData = msgSend.getBytes();
+
+		try {
+			//send data to server
+			mtxSendServer.acquire();
+			if (!mIsFirst && !clientSocket.isClosed()) {
+				sendTCPData(clientSocket, msg);
+			}
+			mtxSendServer.release();
+
+			//send data to all clients
+			mtxClient.acquire();
+			for (Socket sock : arrClients) {
+				sendTCPData(sock, msg);
+			}
+			mtxClient.release();
+
+			if (msgSend.toLowerCase().equals("exit")) {
+				bExit = true;
+			}
+
+			mtxClient.acquire();
+			//close all clients
+			for (Socket sock : arrClients) {
+				sock.close();
+			}
+			//remove all clients from array
+			arrClients.clear();
+			mtxClient.release();
+
+			//close socket if user "exits"
+			mtxSendServer.acquire();
+			clientSocket.close();
+			mtxSendServer.release();
+
+			serverSocket.close();
+		}
+		catch (Exception e) {
+			writeMessage("[Network Error]");
+		}
+	}
+
+	private void serverConnect() throws Exception {
 		boolean bServerFound = false;
 
-		//keep trying to connect to server
 		while(!bServerFound && !mIsFirst)
 		{
 			try
 			{
-				socket = new Socket(mIP, mPort);
+				mtxSendServer.acquire();
+				clientSocket = new Socket(mIP, mClientPort);
+				mtxSendServer.release();
 				bServerFound = true;
 			}
 			catch(ConnectException e)
 			{
-				System.out.println("Server refused, retrying...");
+				writeMessage("Server refused, retrying...");
 
-				try
-				{
+				try {
 					Thread.sleep(2000); //2 seconds
 				}
-				catch(InterruptedException ex){
-					ex.printStackTrace();
+				catch(InterruptedException ex) {
+					//ex.printStackTrace();
 				}
 			}
 		}
-		final Socket listenSocket = socket;
+	}
+
+	private void TCPConnection() throws Exception {
+		//keep trying to connect to server
+
 
 		//receive data from all clients
-		ServerSocket serverSocket = new ServerSocket(mPort);
+		serverSocket = new ServerSocket(mServerPort);
 		Thread serverThread = new Thread(new Runnable() {
 			@Override
 			public void run() {
 				try {
-					processConnections(serverSocket, listenSocket);
+					processConnections(serverSocket);
 				}
 				catch (Exception e) {
-					e.printStackTrace();
+					//e.printStackTrace();
+					writeMessage("[Server socket closed]");
 				}
 			}
 		});
@@ -101,83 +220,63 @@ public class ChatProgram extends Thread{
 				public void run() {
 					try {
 						Message msg = new Message();
-						String msgSend = "";
-						String msgReceive = "";
+						String msgReceive;
 
-						while (!msgReceive.toLowerCase().equals("exit")) {
-							receiveTCPData(listenSocket, msg);
+						boolean bExit = false;
+						while (!bExit) {
+							receiveTCPData(clientSocket, msg);
 							msgReceive = new String(msg.mData);
-							System.out.println("<client>: " + msgReceive);
+							writeMessage("<client>: " + msgReceive);
 
 							//send to all clients
 							if (!msgReceive.toLowerCase().equals("exit")) {
-								mutex.acquire();
-								for (int i = 0; i < arrClients.size(); i++) {
-									sendTCPData(arrClients.get(i), msg);
+								mtxClient.acquire();
+								for (Socket sock : arrClients) {
+									sendTCPData(sock, msg);
 								}
-								mutex.release();
+								mtxClient.release();
 							} else {
-								listenSocket.close();
+								bExit = true;
 							}
 						}
 					} catch (Exception e) {
-						e.printStackTrace();
+						//server stopped
+						//e.printStackTrace();
+						writeMessage("[Server disconnected]");
+					}
+
+					try {
+						clientSocket.close();
+						String host = JOptionPane.showInputDialog("Enter your name:");
+						mClientPort = Integer.parseInt(host.substring(host.indexOf(':') + 1));
+						mIP = host.substring(0, host.indexOf(':'));
+						serverConnect();
+					} catch (Exception e) {
+						//e.printStackTrace();
 					}
 				}
 			});
 			listenThread.start();
 		}
-
-		//attach reader to console
-		BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-
-		Message msg = new Message();
-		String msgSend = "";
-		String msgReceive = "";
-
-		//keep getting user input
-		while (!msgSend.toLowerCase().equals("exit")) {
-			System.out.print("Text to Send: ");
-			msgSend = reader.readLine();
-			msg.mData = msgSend.getBytes();
-
-			//send data to server
-			if (!mIsFirst) {
-				sendTCPData(socket, msg);
-			}
-
-			//send data to all clients
-			mutex.acquire();
-			for (int i = 0; i < arrClients.size(); i++) {
-				sendTCPData(arrClients.get(i), msg);
-			}
-			mutex.release();
-		}
-
-		//close socket if user "exits"
-		socket.close();
 	}
 
-	void processConnections(ServerSocket serverSocket, Socket socket) throws Exception {
-		ArrayList<Thread> arrThreads = new ArrayList<>();
-
+	private void processConnections(ServerSocket serverSocket) throws Exception {
 		//process requests (read/send data)
-		while (true)
-		{
+		while (true) {
 			//wait for new connection
-			Socket clientSocket = serverSocket.accept();
-			System.out.println("<server>: New connection.");
+			Socket cSock = serverSocket.accept();
+			writeMessage("[New connection]");
 
-			mutex.acquire();
-			arrClients.add(clientSocket);
-			mutex.release();
+			mtxClient.acquire();
+			arrClients.add(cSock);
+			mtxClient.release();
 
 			//create new thread to listen
 			Thread thrConn = new Thread(new Runnable() {
 				@Override
 				public void run() {
 					try {
-						String recMsg = "";
+						String recMsg;
 
 						//keep reading data until user "exits"
 						boolean bExit = false;
@@ -185,53 +284,59 @@ public class ChatProgram extends Thread{
 							//receive the data
 							try {
 								Message msg = new Message();
-								receiveTCPData(clientSocket, msg);
+								receiveTCPData(cSock, msg);
 
 								//send back capitalized text
 								recMsg = new String(msg.mData);
 								if (recMsg.toLowerCase().equals("exit")) {
-									System.out.println("[client disconnecting]");
+									writeMessage("[client disconnecting]");
 									msg.mData = "[A client disconnected]".getBytes();
 									bExit = true;
 								} else {
-									System.out.println("<client>: " + recMsg);
+									writeMessage("<client>: " + recMsg);
 								}
 
 								//send data to all other clients
-								mutex.acquire();
-								for (int i = 0; i < arrClients.size(); i++) {
-									if (!arrClients.get(i).equals(clientSocket)) {
-										sendTCPData(arrClients.get(i), msg);
+								mtxClient.acquire();
+								for (Socket sock: arrClients) {
+									if (!sock.equals(cSock)) {
+										sendTCPData(sock, msg);
 									}
 								}
-								mutex.release();
+								mtxClient.release();
 
 								//send data to server
-								if (!mIsFirst) {
-									sendTCPData(socket, msg);
+								mtxSendServer.acquire();
+								if (!mIsFirst && !clientSocket.isClosed()) {
+									sendTCPData(clientSocket, msg);
 								}
+								mtxSendServer.release();
 							}
 							catch (Exception ex) {
-								ex.printStackTrace();
+								//client disconnected
+								//ex.printStackTrace();
+								writeMessage("[Client Socket closed]");
+								bExit = true;
+							}
+
+							if (bExit) {
+								mtxClient.acquire();
+								arrClients.remove(clientSocket);
+								mtxClient.release();
 							}
 						}
-
-						clientSocket.close();
 					}
 					catch(Exception ex) {
-						ex.printStackTrace();
+						//ex.printStackTrace();
 					}
 				}
 			});
 			thrConn.start();	//start the thread
-
-			//add to array
-			arrThreads.add(thrConn);
 		}
 	}
 
 	//handles receiving TCP data and wraps the message in a Message class
-	void receiveTCPData(Socket socket, Message msg) throws Exception{
+	private void receiveTCPData(Socket socket, Message msg) throws Exception{
 		DataInputStream inData = new DataInputStream(socket.getInputStream());
 
 		//get size of receiving data
@@ -246,7 +351,7 @@ public class ChatProgram extends Thread{
 	}
 
 	//handles sending wrapped data in the Message class over TCP
-	void sendTCPData(Socket socket, Message msg) throws Exception{
+	private void sendTCPData(Socket socket, Message msg) throws Exception{
 		DataOutputStream outData = new DataOutputStream(socket.getOutputStream());
 
 		//wrap size of data
@@ -258,5 +363,19 @@ public class ChatProgram extends Thread{
 		//send data
 		outData.write(msg.mData);
 		outData.flush();
+	}
+
+	private void writeMessage(String msg) {
+		if (mIsFirst) {
+			try {
+				mtxTextArea.acquire();
+				txtReceive.append(msg + "\n");
+				scrollPane.scrollRectToVisible(txtReceive.getBounds());
+			} catch (Exception e) {
+				//e.printStackTrace();
+			}
+		} else {
+			System.out.println(msg);
+		}
 	}
 }
