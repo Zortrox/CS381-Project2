@@ -23,10 +23,10 @@ public class ChatProgram {
 		byte[] mName;		//original sender's name
 	}
 
-	private int mClientPort;
-	private int mServerPort;
-	private String mIP;
-	private boolean mIsFirst;
+	private int mClientPort = 4578;
+	private int mServerPort = 4513;
+	private String mIP = "127.0.0.1";
+	private boolean mIsFirst = false;
 
 	private Socket clientSocket;
 	private ServerSocket serverSocket;
@@ -44,88 +44,61 @@ public class ChatProgram {
 	private ArrayList<Socket> arrClients = new ArrayList<>();
 
 	public static void main(String[] args) {
-		if (args.length > 0) {
+		ChatProgram client = new ChatProgram();
 
-			String loc = args[0];
-			int port = Integer.parseInt(loc.substring(loc.indexOf(':') + 1));
-			String IP = loc.substring(0, loc.indexOf(':'));
-
-			boolean isFirst = false;
-			int serverPort = port;
-			if (args.length > 1) {
-				if (args[1].toLowerCase().equals("true")) {
-					isFirst = true;
-				} else {
-					try {
-						serverPort = Integer.parseInt(args[1]);
-					} catch (NumberFormatException e) {
-						serverPort = port;
-					}
-				}
-			}
-
-			ChatProgram client = new ChatProgram(port, serverPort, IP, isFirst);
-
-			try {
-				client.TCPConnection();
-			} catch (Exception ex) {
-				System.out.println("[Network Error Occurred]");
-			}
+		try {
+			client.TCPConnection();
+		} catch (Exception ex) {
+			System.out.println("[Network Error Occurred]");
 		}
 	}
 
-	private ChatProgram(int portClient, int portServer, String IP, boolean isFirst) {
-		mClientPort = portClient;
-		mServerPort = portServer;
-		mIP = IP;
-		mIsFirst = isFirst;
+	private ChatProgram() {
+		JFrame frame = new JFrame("Chat Client");
+		frame.setSize(600, 400);
+		frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
 
-		if (!mIsFirst) {
-			JFrame frame = new JFrame("Chat Client");
-			frame.setSize(600, 400);
-			frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+		txtReceive = new JTextArea(1, 20);
+		txtReceive.setEditable(false);
+		scrollPane = new JScrollPane(txtReceive, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+				JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+		DefaultCaret caret = (DefaultCaret) txtReceive.getCaret();
+		caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
+		frame.add(scrollPane);
 
-			txtReceive = new JTextArea(1, 20);
-			txtReceive.setEditable(false);
-			scrollPane = new JScrollPane(txtReceive, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
-					JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-			DefaultCaret caret = (DefaultCaret) txtReceive.getCaret();
-			caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
-			frame.add(scrollPane);
-
-			JPanel panelSend = new JPanel();
-			txtMessage = new JTextField();
-			txtMessage.setColumns(40);
-			txtMessage.addActionListener(new ActionListener() {
-				@Override
-				public void actionPerformed(ActionEvent e) {
-					broadcast(txtMessage.getText());
-				}
-			});
-
-			JButton btnSend = new JButton("Send");
-			btnSend.addActionListener(new ActionListener() {
-				@Override
-				public void actionPerformed(ActionEvent e) {
-					broadcast(txtMessage.getText());
-				}
-			});
-
-			panelSend.add(txtMessage, BorderLayout.CENTER);
-			panelSend.add(btnSend, BorderLayout.EAST);
-
-			frame.add(panelSend, BorderLayout.SOUTH);
-
-			frame.setVisible(true);
-
-			while (clientName == null || clientName.equals("")) {
-				clientName = JOptionPane.showInputDialog("Enter your name:");
+		JPanel panelSend = new JPanel();
+		txtMessage = new JTextField();
+		txtMessage.setColumns(40);
+		txtMessage.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				broadcast(txtMessage.getText());
 			}
+		});
+
+		JButton btnSend = new JButton("Send");
+		btnSend.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				broadcast(txtMessage.getText());
+			}
+		});
+
+		panelSend.add(txtMessage, BorderLayout.CENTER);
+		panelSend.add(btnSend, BorderLayout.EAST);
+
+		frame.add(panelSend, BorderLayout.SOUTH);
+
+		frame.setVisible(true);
+
+		while (clientName == null || clientName.equals("")) {
+			clientName = JOptionPane.showInputDialog("Enter your name:");
 		}
 	}
 
 	private void broadcast(String msgSend) {
 		Message msg = new Message();
+		msg.mName = clientName.getBytes();
 		msg.mData = msgSend.getBytes();
 		writeMessage("<" + clientName + ">: " + msgSend);
 		txtMessage.setText("");
@@ -168,6 +141,22 @@ public class ChatProgram {
 	}
 
 	private void serverConnect() throws Exception {
+		String host = JOptionPane.showInputDialog("Connect to IP:Port", mIP + ":" + mClientPort);
+		if (host == null || host.equals("")) {
+			mIsFirst = true;
+		} else {
+			try {
+				mClientPort = Integer.parseInt(host.substring(host.indexOf(':') + 1));
+				mIP = host.substring(0, host.indexOf(':'));
+			} catch (Exception e) {
+				mIsFirst = true;
+			}
+		}
+
+		if (serverSocket == null) {
+			JOptionPane.showInputDialog("Listen for connections on", mServerPort);
+		}
+
 		while(!bConnected.get() && !mIsFirst)
 		{
 			try
@@ -191,6 +180,12 @@ public class ChatProgram {
 					//ex.printStackTrace();
 				}
 			}
+		}
+
+		if (!mIsFirst) {
+			writeMessage("[Connected to " + mIP + ":" + mClientPort + "]");
+		} else {
+			writeMessage("[Setting as main server]");
 		}
 	}
 
@@ -251,9 +246,6 @@ public class ChatProgram {
 
 					try {
 						clientSocket.close();
-						String host = JOptionPane.showInputDialog("Enter the new server's IP:Port");
-						mClientPort = Integer.parseInt(host.substring(host.indexOf(':') + 1));
-						mIP = host.substring(0, host.indexOf(':'));
 						serverConnect();
 					} catch (Exception e) {
 						//e.printStackTrace();
@@ -293,11 +285,12 @@ public class ChatProgram {
 								//exit on client sending "exit"
 								recMsg = new String(msg.mData);
 								if (recMsg.toLowerCase().equals("exit")) {
-									writeMessage("[client disconnecting]");
-									msg.mData = "[A client disconnected]".getBytes();
+									String strDis = "[" + new String(msg.mName) + " disconnected]";
+									writeMessage(strDis);
+									msg.mData = strDis.getBytes();
 									bExit = true;
 								} else {
-									writeMessage("<client>: " + recMsg);
+									writeMessage("<" + new String(msg.mName) + ">: " + recMsg);
 								}
 
 								//send data to all other clients
@@ -387,17 +380,13 @@ public class ChatProgram {
 	}
 
 	private void writeMessage(String msg) {
-		if (!mIsFirst) {
-			try {
-				mtxTextArea.acquire();
-				txtReceive.append(msg + "\n");
-				scrollPane.scrollRectToVisible(txtReceive.getBounds());
-				mtxTextArea.release();
-			} catch (Exception e) {
-				//e.printStackTrace();
-			}
-		} else {
-			System.out.println(msg);
+		try {
+			mtxTextArea.acquire();
+			txtReceive.append(msg + "\n");
+			scrollPane.scrollRectToVisible(txtReceive.getBounds());
+			mtxTextArea.release();
+		} catch (Exception e) {
+			//e.printStackTrace();
 		}
 	}
 }
