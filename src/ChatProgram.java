@@ -45,12 +45,7 @@ public class ChatProgram {
 
 	public static void main(String[] args) {
 		ChatProgram client = new ChatProgram();
-
-		try {
-			client.TCPConnection();
-		} catch (Exception ex) {
-			System.out.println("[Network Error Occurred]");
-		}
+		client.TCPConnection();
 	}
 
 	private ChatProgram() {
@@ -134,14 +129,17 @@ public class ChatProgram {
 				mtxSendServer.release();
 
 				serverSocket.close();
+
+				//close the program once the user "exits"
+				System.exit(0);
 			}
 		} catch (Exception e) {
 			writeMessage("[Network Error]");
 		}
 	}
 
-	private void serverConnect() throws Exception {
-		String host = JOptionPane.showInputDialog("Connect to IP:Port", mIP + ":" + mClientPort);
+	private void showServerPopup() {
+		String host = JOptionPane.showInputDialog("Connect to IP:Port\nCancel to only listen", mIP + ":" + mClientPort);
 		if (host == null || host.equals("")) {
 			mIsFirst = true;
 		} else {
@@ -152,11 +150,32 @@ public class ChatProgram {
 				mIsFirst = true;
 			}
 		}
+	}
+
+	private void serverConnect() throws Exception {
+		showServerPopup();
 
 		if (serverSocket == null) {
-			JOptionPane.showInputDialog("Listen for connections on", mServerPort);
+			String strPrepend = "";
+
+			boolean goodPort = false;
+			while (!goodPort) {
+				try {
+					mServerPort = Integer.parseInt(
+							JOptionPane.showInputDialog(strPrepend + "Listen for connections on", mServerPort));
+					serverSocket = new ServerSocket(mServerPort);
+					goodPort = true;
+				} catch (BindException e) {
+					strPrepend = "Server port already in use.\n\n";
+				} catch (NumberFormatException e) {
+					strPrepend = "Port number not formatted correctly.\n\n";
+				} catch (Exception e) {
+					//e.printStackTrace();
+				}
+			}
 		}
 
+		int maxRetries = 5;
 		while(!bConnected.get() && !mIsFirst)
 		{
 			try
@@ -168,16 +187,21 @@ public class ChatProgram {
 			}
 			catch(ConnectException e)
 			{
-				//release the mutex
-				mtxSendServer.release();
+				if (maxRetries > 0) {
+					//release the mutex
+					mtxSendServer.release();
 
-				writeMessage("Server refused, retrying...");
+					writeMessage("Server refused, retrying...");
+					maxRetries--;
 
-				try {
-					Thread.sleep(2000); //2 seconds
-				}
-				catch(InterruptedException ex) {
-					//ex.printStackTrace();
+					try {
+						Thread.sleep(2000); //2 seconds
+					} catch (InterruptedException ex) {
+						//ex.printStackTrace();
+					}
+				} else {
+					showServerPopup();
+					maxRetries = 5;
 				}
 			}
 		}
@@ -189,70 +213,77 @@ public class ChatProgram {
 		}
 	}
 
-	private void TCPConnection() throws Exception {
+	private void TCPConnection() {
 		writeMessage("Starting Client in TCP\n");
 
-		//keep trying to connect to server
-		serverConnect();
+		try {
+			//keep trying to connect to server
+			serverConnect();
 
-		//receive data from all clients
-		serverSocket = new ServerSocket(mServerPort);
-		Thread serverThread = new Thread(new Runnable() {
-			@Override
-			public void run() {
-				try {
-					processConnections(serverSocket);
-				}
-				catch (Exception e) {
-					//e.printStackTrace();
-					writeMessage("[Server socket closed]");
-				}
-			}
-		});
-		serverThread.start();
-
-		//receive data from server
-		if (!mIsFirst) {
-			Thread listenThread = new Thread(new Runnable() {
+			//receive data from all clients
+			Thread serverThread = new Thread(new Runnable() {
 				@Override
 				public void run() {
 					try {
-						Message msg = new Message();
-						String msgReceive;
-
-						boolean bExit = false;
-						while (!bExit) {
-							receiveTCPData(clientSocket, msg);
-							msgReceive = new String(msg.mData);
-							writeMessage("<client>: " + msgReceive);
-
-							//send to all clients
-							if (!msgReceive.toLowerCase().equals("exit")) {
-								mtxClient.acquire();
-								for (Socket sock : arrClients) {
-									sendTCPData(sock, msg);
-								}
-								mtxClient.release();
-							} else {
-								bExit = true;
-							}
-						}
-					} catch (Exception e) {
-						//server stopped
-						//e.printStackTrace();
-						writeMessage("[Server disconnected]");
-						bConnected.set(false);
-					}
-
-					try {
-						clientSocket.close();
-						serverConnect();
+						processConnections(serverSocket);
 					} catch (Exception e) {
 						//e.printStackTrace();
+						writeMessage("[Server socket closed]");
 					}
 				}
 			});
-			listenThread.start();
+			serverThread.start();
+
+			//receive data from server
+			if (!mIsFirst) {
+				Thread listenThread = new Thread(new Runnable() {
+					@Override
+					public void run() {
+						try {
+							Message msg = new Message();
+							String msgReceive;
+
+							boolean bExit = false;
+							while (!bExit) {
+								receiveTCPData(clientSocket, msg);
+								msgReceive = new String(msg.mData);
+								writeMessage("<" + new String(msg.mName) + ">: " + msgReceive);
+
+								//send to all clients
+								if (!msgReceive.toLowerCase().equals("exit")) {
+									mtxClient.acquire();
+									for (Socket sock : arrClients) {
+										sendTCPData(sock, msg);
+									}
+									mtxClient.release();
+								} else {
+									bExit = true;
+								}
+							}
+						} catch (Exception e) {
+							//server stopped
+							//e.printStackTrace();
+							writeMessage("[Server disconnected]");
+							bConnected.set(false);
+						}
+
+						try {
+							clientSocket.close();
+						} catch (Exception e) {
+							//e.printStackTrace();
+						} finally {
+							try {
+								serverConnect();
+							} catch (Exception e) {
+								//e.printStackTrace();
+							}
+						}
+					}
+				});
+				listenThread.start();
+			}
+		} catch (Exception e) {
+			writeMessage("[Network Error Occurred]");
 		}
 	}
 
@@ -318,7 +349,7 @@ public class ChatProgram {
 
 							if (bExit) {
 								mtxClient.acquire();
-								arrClients.remove(clientSocket);
+								arrClients.remove(cSock);
 								mtxClient.release();
 							}
 						}
